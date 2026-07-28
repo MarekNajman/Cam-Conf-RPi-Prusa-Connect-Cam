@@ -19,10 +19,104 @@ fi
 # Load configuration
 source "$CONFIG_FILE"
 
-# Default stream settings
-STREAM_PORT=${STREAM_PORT:-8080}
-STREAM_WIDTH=${STREAM_WIDTH:-1280}
-STREAM_HEIGHT=${STREAM_HEIGHT:-720}
+config_warning() {
+    echo "WARNING: $*" >&2
+}
+
+config_get() {
+    local variable_name="$1"
+    local default_value="$2"
+    local configured_value="${!variable_name}"
+
+    if [[ -n "$configured_value" ]]; then
+        printf '%s\n' "$configured_value"
+    else
+        printf '%s\n' "$default_value"
+    fi
+}
+
+config_get_int() {
+    local variable_name="$1"
+    local default_value="$2"
+    local configured_value="${!variable_name}"
+
+    if [[ -z "$configured_value" ]]; then
+        printf '%s\n' "$default_value"
+        return
+    fi
+
+    if [[ "$configured_value" =~ ^-?[0-9]+$ ]]; then
+        printf '%s\n' "$configured_value"
+    else
+        config_warning "$variable_name must be an integer; using default: $default_value"
+        printf '%s\n' "$default_value"
+    fi
+}
+
+validate_min_int() {
+    local variable_name="$1"
+    local value="$2"
+    local default_value="$3"
+    local min_value="$4"
+
+    if (( value >= min_value )); then
+        printf '%s\n' "$value"
+    else
+        config_warning "$variable_name must be >= $min_value; using default: $default_value"
+        printf '%s\n' "$default_value"
+    fi
+}
+
+validate_int_range() {
+    local variable_name="$1"
+    local value="$2"
+    local default_value="$3"
+    local min_value="$4"
+    local max_value="$5"
+
+    if (( value >= min_value && value <= max_value )); then
+        printf '%s\n' "$value"
+    else
+        config_warning "$variable_name must be between $min_value and $max_value; using default: $default_value"
+        printf '%s\n' "$default_value"
+    fi
+}
+
+load_runtime_configuration() {
+    # Runtime code must use only the normalized variables assigned here.
+    # Add future configuration defaults and lightweight validation in this
+    # function instead of adding fallback expressions to runtime logic.
+    local stream_port_default=8080
+    local stream_width_default=1280
+    local stream_height_default=720
+    local focus_mode_default="auto"
+    local focus_value_default=0
+    local focus_settle_time_default=0
+
+    CAMERA_TYPE=$(config_get CAMERA_TYPE "")
+    CAMERA_ID=$(config_get CAMERA_ID "")
+    CAMERA_DEVICE=$(config_get CAMERA_DEVICE "")
+    CAMERA_NAME=$(config_get CAMERA_NAME "")
+
+    STREAM_PORT=$(config_get_int STREAM_PORT "$stream_port_default")
+    STREAM_PORT=$(validate_int_range STREAM_PORT "$STREAM_PORT" "$stream_port_default" 1 65535)
+
+    STREAM_WIDTH=$(config_get_int STREAM_WIDTH "$stream_width_default")
+    STREAM_WIDTH=$(validate_min_int STREAM_WIDTH "$STREAM_WIDTH" "$stream_width_default" 1)
+
+    STREAM_HEIGHT=$(config_get_int STREAM_HEIGHT "$stream_height_default")
+    STREAM_HEIGHT=$(validate_min_int STREAM_HEIGHT "$STREAM_HEIGHT" "$stream_height_default" 1)
+
+    FOCUS_MODE=$(config_get FOCUS_MODE "$focus_mode_default")
+
+    FOCUS_VALUE=$(config_get_int FOCUS_VALUE "$focus_value_default")
+    FOCUS_VALUE=$(validate_min_int FOCUS_VALUE "$FOCUS_VALUE" "$focus_value_default" 0)
+
+    FOCUS_SETTLE_TIME=$(config_get_int FOCUS_SETTLE_TIME "$focus_settle_time_default")
+    FOCUS_SETTLE_TIME=$(validate_min_int FOCUS_SETTLE_TIME "$FOCUS_SETTLE_TIME" "$focus_settle_time_default" 0)
+}
+
+load_runtime_configuration
 
 echo "========================================"
 echo "  Camera Stream Server"
