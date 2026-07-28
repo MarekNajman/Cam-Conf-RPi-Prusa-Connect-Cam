@@ -479,7 +479,7 @@ print_summary() {
     echo "  Edit config:        sudo nano $CONFIG_FILE"
     echo "  Uninstall:          sudo /opt/prusa-cam/uninstall.sh"
     echo ""
-    echo -e "${GREEN}Camera config version by Marek Najman${NC}"
+    echo -e "${GREEN}Enjoy your Prusa Connect camera!${NC}"
     echo ""
 }
 
