@@ -160,12 +160,12 @@ install_files() {
         # Download from GitHub
         echo "  Downloading from GitHub..."
         cd /tmp
-        rm -rf RPi-Prusa-Connect-Cam-* 2>/dev/null || true
+        rm -rf Cam-Conf-RPi-Prusa-Connect-Cam-* 2>/dev/null || true
         curl -sL "$REPO_URL/archive/$REPO_BRANCH.tar.gz" | tar -xz
-        cp RPi-Prusa-Connect-Cam-$REPO_BRANCH/scripts/*.sh "$INSTALL_DIR/scripts/"
-        cp RPi-Prusa-Connect-Cam-$REPO_BRANCH/web/* "$INSTALL_DIR/web/" 2>/dev/null || true
-        cp RPi-Prusa-Connect-Cam-$REPO_BRANCH/config/* "$INSTALL_DIR/config/" 2>/dev/null || true
-        rm -rf /tmp/RPi-Prusa-Connect-Cam-*
+        cp Cam-Conf-RPi-Prusa-Connect-Cam-$REPO_BRANCH/scripts/*.sh "$INSTALL_DIR/scripts/"
+        cp Cam-Conf-RPi-Prusa-Connect-Cam-$REPO_BRANCH/web/* "$INSTALL_DIR/web/" 2>/dev/null || true
+        cp Cam-Conf-RPi-Prusa-Connect-Cam-$REPO_BRANCH/config/* "$INSTALL_DIR/config/" 2>/dev/null || true
+        rm -rf /tmp/Cam-Conf-RPi-Prusa-Connect-Cam-*
     fi
 
     chmod +x "$INSTALL_DIR/scripts/"*.sh
