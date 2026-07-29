@@ -39,11 +39,14 @@ load_configuration() {
     STREAM_WIDTH=${STREAM_WIDTH:-1280}
     STREAM_HEIGHT=${STREAM_HEIGHT:-720}
 
-    # Future autofocus configuration. Loaded for forward compatibility only;
-    # intentionally not used yet, so current camera behavior is unchanged.
+    # Autofocus configuration. Empty values preserve existing camera behavior.
     FOCUS_MODE=${FOCUS_MODE:-}
     FOCUS_VALUE=${FOCUS_VALUE:-}
-    FOCUS_SETTLE_TIME=${FOCUS_SETTLE_TIME:-}
+    FOCUS_SETTLE_TIME=${FOCUS_SETTLE_TIME:-2}
+
+    # Camera control capability cache, populated once at stream startup.
+    CAMERA_CONTROLS_LOADED=0
+    CAMERA_CONTROLS=""
 }
 
 print_startup_banner() {
@@ -58,19 +61,35 @@ print_startup_banner() {
     log_info ""
 }
 
-has_v4l2_control() {
+load_camera_controls() {
     local device="$1"
-    local control="$2"
 
-    command -v v4l2-ctl &> /dev/null && \
-        v4l2-ctl -d "$device" --list-ctrls 2>/dev/null | grep -q "^[[:space:]]*$control[[:space:]]"
+    CAMERA_CONTROLS_LOADED=1
+    CAMERA_CONTROLS=""
+
+    if ! command -v v4l2-ctl &> /dev/null; then
+        log_warn "v4l2-ctl not found; camera controls will not be configured"
+        return 0
+    fi
+
+    if ! CAMERA_CONTROLS=$(v4l2-ctl -d "$device" --list-ctrls 2>/dev/null); then
+        CAMERA_CONTROLS=""
+        log_warn "Unable to read camera controls for $device; continuing without control configuration"
+    fi
+}
+
+has_v4l2_control() {
+    local control="$1"
+
+    [[ "$CAMERA_CONTROLS_LOADED" -eq 1 ]] && \
+        printf '%s\n' "$CAMERA_CONTROLS" | grep -q "^[[:space:]]*$control[[:space:]]"
 }
 
 read_v4l2_control() {
     local device="$1"
     local control="$2"
 
-    v4l2-ctl -d "$device" --get-ctrl="$control" 2>/dev/null
+    v4l2-ctl -d "$device" --get-ctrl="$control" 2>/dev/null | awk -F': ' '{print $2}'
 }
 
 write_v4l2_control() {
@@ -79,6 +98,82 @@ write_v4l2_control() {
     local value="$3"
 
     v4l2-ctl -d "$device" --set-ctrl="${control}=${value}" 2>/dev/null
+}
+
+set_v4l2_control_or_warn() {
+    local device="$1"
+    local control="$2"
+    local value="$3"
+    local description="$4"
+
+    if ! has_v4l2_control "$control"; then
+        log_warn "Camera does not expose $control; cannot configure $description"
+        return 1
+    fi
+
+    if ! write_v4l2_control "$device" "$control" "$value"; then
+        log_warn "Failed to set $control=$value for $description"
+        return 1
+    fi
+
+    return 0
+}
+
+configure_focus() {
+    local device="$1"
+    local captured_focus
+
+    case "$FOCUS_MODE" in
+        "")
+            return 0
+            ;;
+        "auto")
+            set_v4l2_control_or_warn "$device" "focus_auto" "1" "autofocus" || true
+            ;;
+        "continuous")
+            if has_v4l2_control "focus_automatic_continuous"; then
+                set_v4l2_control_or_warn "$device" "focus_automatic_continuous" "1" "continuous autofocus" || true
+            else
+                log_warn "Camera does not expose focus_automatic_continuous; cannot configure continuous autofocus"
+            fi
+            ;;
+        "lock")
+            if ! has_v4l2_control "focus_auto"; then
+                log_warn "Camera does not expose focus_auto; cannot configure locked autofocus"
+                return 0
+            fi
+            if ! has_v4l2_control "focus_absolute"; then
+                log_warn "Camera does not expose focus_absolute; cannot lock current focus value"
+                return 0
+            fi
+
+            if write_v4l2_control "$device" "focus_auto" "1"; then
+                sleep "$FOCUS_SETTLE_TIME"
+                captured_focus=$(read_v4l2_control "$device" "focus_absolute")
+                if [[ -n "$captured_focus" ]]; then
+                    write_v4l2_control "$device" "focus_auto" "0" || \
+                        log_warn "Failed to disable autofocus after focus lock"
+                    write_v4l2_control "$device" "focus_absolute" "$captured_focus" || \
+                        log_warn "Failed to restore locked focus value $captured_focus"
+                else
+                    log_warn "Unable to read focus_absolute after autofocus settle; leaving autofocus enabled"
+                fi
+            else
+                log_warn "Failed to enable autofocus for focus lock"
+            fi
+            ;;
+        "manual")
+            if [[ -z "$FOCUS_VALUE" ]]; then
+                log_warn "FOCUS_MODE=manual but FOCUS_VALUE is empty; skipping manual focus configuration"
+                return 0
+            fi
+            set_v4l2_control_or_warn "$device" "focus_auto" "0" "manual focus" || true
+            set_v4l2_control_or_warn "$device" "focus_absolute" "$FOCUS_VALUE" "manual focus" || true
+            ;;
+        *)
+            log_warn "Unknown FOCUS_MODE '$FOCUS_MODE'; continuing without focus configuration"
+            ;;
+    esac
 }
 
 run_mjpeg_server() {
@@ -270,6 +365,9 @@ start_usb_stream() {
         log_error "ffmpeg not found"
         exit 1
     fi
+
+    load_camera_controls "$CAMERA_DEVICE"
+    configure_focus "$CAMERA_DEVICE"
 
     # Use ffmpeg to convert the USB camera feed to MJPEG for the shared HTTP server.
     ffmpeg -f v4l2 -input_format mjpeg \
