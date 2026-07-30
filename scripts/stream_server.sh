@@ -349,9 +349,9 @@ start_rpi_stream() {
     "$vid_cmd" --camera "$CAMERA_ID" \
         --width "$STREAM_WIDTH" \
         --height "$STREAM_HEIGHT" \
-        --framerate 30 \
+        --framerate 20 \
         --codec mjpeg \
-        --quality 80 \
+        --quality 90 \
         --nopreview \
         -t 0 \
         --inline \
@@ -372,7 +372,7 @@ start_usb_stream() {
     # Use ffmpeg to convert the USB camera feed to MJPEG for the shared HTTP server.
     ffmpeg -f v4l2 -input_format mjpeg \
         -video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}" \
-        -framerate 30 \
+        -framerate 20 \
         -i "$CAMERA_DEVICE" \
         -c:v mjpeg -q:v 5 \
         -f mjpeg - 2>/dev/null | run_mjpeg_server
