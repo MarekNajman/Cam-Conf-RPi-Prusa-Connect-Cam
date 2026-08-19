@@ -54,3 +54,36 @@ STREAM_PORT=8080
 # Stream resolution (lower than capture for performance)
 STREAM_WIDTH=1280
 STREAM_HEIGHT=720
+
+# ============================================
+# Secondary Camera Settings (optional)
+# ============================================
+
+# Enable secondary camera: 0 or 1
+SECOND_CAMERA_ENABLED=0
+
+# Secondary camera type: RPI or USB
+SECOND_CAMERA_TYPE=""
+
+# For secondary RPi cameras: camera index (0, 1, etc.)
+SECOND_CAMERA_ID=""
+
+# For secondary USB cameras: device path (e.g., /dev/video1)
+SECOND_CAMERA_DEVICE=""
+
+# Secondary camera name (for display purposes)
+SECOND_CAMERA_NAME=""
+
+# Secondary camera fingerprint and token from Prusa Connect
+SECOND_FINGERPRINT=""
+SECOND_TOKEN=""
+
+# Secondary focus settings
+SECOND_FOCUS_MODE="auto"
+SECOND_FOCUS_VALUE=0
+SECOND_FOCUS_SETTLE_TIME=2
+
+# Secondary MJPEG stream settings; use a different port than STREAM_PORT
+SECOND_STREAM_PORT=8081
+SECOND_STREAM_WIDTH=1280
+SECOND_STREAM_HEIGHT=720
