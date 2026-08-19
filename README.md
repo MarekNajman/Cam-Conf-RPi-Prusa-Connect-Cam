@@ -6,6 +6,7 @@ A simple setup script for connecting a Raspberry Pi camera to Prusa Connect. Wor
 
 - **Auto-detection** of RPi Camera Modules and USB webcams
 - **Live MJPEG stream** viewable in your browser
+- **Optional secondary camera** with its own Prusa Connect token, snapshot upload, and MJPEG stream port
 - **Prusa Connect integration** - automatic snapshot uploads
 - **Auto-start on boot** via systemd services
 - **One-command installation**
@@ -68,6 +69,11 @@ Open your browser and go to:
 http://<raspberry-pi-ip>:8080
 ```
 
+If you enabled a secondary camera during installation, its default stream is:
+```
+http://<raspberry-pi-ip>:8081
+```
+
 ### View Logs
 
 ```bash
@@ -124,6 +130,12 @@ The configuration file `/etc/prusa_cam.conf` contains:
 | `STREAM_PORT` | Local stream server port | 8080 |
 | `STREAM_WIDTH` | Stream resolution width | 1280 |
 | `STREAM_HEIGHT` | Stream resolution height | 720 |
+| `SECOND_CAMERA_ENABLED` | Enable optional secondary camera: `0` or `1` | 0 |
+| `SECOND_CAMERA_TYPE` | Secondary camera type: `RPI` or `USB` | Installer-selected |
+| `SECOND_TOKEN` | Secondary camera Prusa Connect token | Installer-provided |
+| `SECOND_STREAM_PORT` | Secondary local stream server port; must differ from `STREAM_PORT` | 8081 |
+| `SECOND_STREAM_WIDTH` | Secondary stream resolution width | 1280 |
+| `SECOND_STREAM_HEIGHT` | Secondary stream resolution height | 720 |
 
 ## Uninstall
 
@@ -169,8 +181,8 @@ Newer Raspberry Pi OS versions use `rpicam-*` commands instead of `libcamera-*`.
 ## How It Works
 
 1. **Camera Detection**: Uses `rpicam-hello`/`libcamera-hello` for RPi cameras and `v4l2-ctl` for USB cameras
-2. **Live Stream**: Lightweight Python MJPEG server streams video and saves snapshots to RAM (`/tmp`)
-3. **Snapshot Upload**: Uploads snapshots to Prusa Connect API every 10 seconds
+2. **Live Stream**: Lightweight Python MJPEG server streams the primary camera and, when enabled, a secondary camera on a separate port while saving snapshots to RAM (`/tmp`)
+3. **Snapshot Upload**: Uploads primary and optional secondary snapshots to Prusa Connect API every 10 seconds
 4. **Auto-start**: systemd services ensure everything starts on boot
 
 **Note**: All temporary files are stored in `/tmp` (tmpfs/RAM) to avoid SD card wear.

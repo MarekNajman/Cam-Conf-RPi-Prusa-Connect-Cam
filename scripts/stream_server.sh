@@ -9,6 +9,7 @@
 
 CONFIG_FILE="/etc/prusa_cam.conf"
 SNAPSHOT_FILE="/tmp/stream_snapshot.jpg"
+SECOND_SNAPSHOT_FILE="/tmp/stream_snapshot_second.jpg"
 
 log_info() {
     echo "$*"
@@ -39,12 +40,21 @@ load_configuration() {
     STREAM_WIDTH=${STREAM_WIDTH:-1280}
     STREAM_HEIGHT=${STREAM_HEIGHT:-720}
 
+    # Optional secondary camera defaults keep existing single-camera installs compatible.
+    SECOND_CAMERA_ENABLED=${SECOND_CAMERA_ENABLED:-0}
+    SECOND_STREAM_PORT=${SECOND_STREAM_PORT:-8081}
+    SECOND_STREAM_WIDTH=${SECOND_STREAM_WIDTH:-1280}
+    SECOND_STREAM_HEIGHT=${SECOND_STREAM_HEIGHT:-720}
+
     # Autofocus configuration. Empty values preserve existing camera behavior.
     FOCUS_MODE=${FOCUS_MODE:-}
     FOCUS_VALUE=${FOCUS_VALUE:-}
     FOCUS_SETTLE_TIME=${FOCUS_SETTLE_TIME:-2}
+    SECOND_FOCUS_MODE=${SECOND_FOCUS_MODE:-}
+    SECOND_FOCUS_VALUE=${SECOND_FOCUS_VALUE:-}
+    SECOND_FOCUS_SETTLE_TIME=${SECOND_FOCUS_SETTLE_TIME:-2}
 
-    # Camera control capability cache, populated once at stream startup.
+    # Camera control capability cache, populated once per USB camera at stream startup.
     CAMERA_CONTROLS_LOADED=0
     CAMERA_CONTROLS=""
 }
@@ -58,6 +68,12 @@ print_startup_banner() {
     log_info "Camera: $CAMERA_NAME"
     log_info "Stream Port: $STREAM_PORT"
     log_info "Resolution: ${STREAM_WIDTH}x${STREAM_HEIGHT}"
+    if [[ "$SECOND_CAMERA_ENABLED" == "1" ]]; then
+        log_info "Secondary Camera Type: $SECOND_CAMERA_TYPE"
+        log_info "Secondary Camera: $SECOND_CAMERA_NAME"
+        log_info "Secondary Stream Port: $SECOND_STREAM_PORT"
+        log_info "Secondary Resolution: ${SECOND_STREAM_WIDTH}x${SECOND_STREAM_HEIGHT}"
+    fi
     log_info ""
 }
 
@@ -177,8 +193,11 @@ configure_focus() {
 }
 
 run_mjpeg_server() {
-    STREAM_SERVER_PORT="$STREAM_PORT" \
-    STREAM_SERVER_SNAPSHOT_FILE="$SNAPSHOT_FILE" \
+    local stream_port="$1"
+    local snapshot_file="$2"
+
+    STREAM_SERVER_PORT="$stream_port" \
+    STREAM_SERVER_SNAPSHOT_FILE="$snapshot_file" \
     python3 -c "$(generate_mjpeg_server_python)"
 }
 
@@ -336,64 +355,110 @@ find_rpi_video_command() {
 }
 
 start_rpi_stream() {
+    local camera_id="$1"
+    local width="$2"
+    local height="$3"
+    local port="$4"
+    local snapshot_file="$5"
+    local label="$6"
     local vid_cmd
 
-    log_info "Starting RPi camera stream..."
+    log_info "Starting $label RPi camera stream on port $port..."
 
     if ! vid_cmd=$(find_rpi_video_command); then
         log_error "No video capture tool found (rpicam-vid/libcamera-vid)"
         exit 1
     fi
 
-    # Use rpicam-vid/libcamera-vid with inline MJPEG and pipe to Python HTTP server.
-    "$vid_cmd" --camera "$CAMERA_ID" \
-        --width "$STREAM_WIDTH" \
-        --height "$STREAM_HEIGHT" \
+    "$vid_cmd" --camera "$camera_id" \
+        --width "$width" \
+        --height "$height" \
         --framerate 20 \
         --codec mjpeg \
         --quality 90 \
         --nopreview \
         -t 0 \
         --inline \
-        -o - 2>/dev/null | run_mjpeg_server
+        -o - 2>/dev/null | run_mjpeg_server "$port" "$snapshot_file"
 }
 
 start_usb_stream() {
-    log_info "Starting USB webcam stream..."
+    local device="$1"
+    local width="$2"
+    local height="$3"
+    local port="$4"
+    local snapshot_file="$5"
+    local label="$6"
+
+    log_info "Starting $label USB webcam stream on port $port..."
 
     if ! command -v ffmpeg &> /dev/null; then
         log_error "ffmpeg not found"
         exit 1
     fi
 
-    load_camera_controls "$CAMERA_DEVICE"
-    configure_focus "$CAMERA_DEVICE"
+    load_camera_controls "$device"
+    configure_focus "$device"
 
-    # Use ffmpeg to convert the USB camera feed to MJPEG for the shared HTTP server.
     ffmpeg -f v4l2 -input_format mjpeg \
-        -video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}" \
+        -video_size "${width}x${height}" \
         -framerate 20 \
-        -i "$CAMERA_DEVICE" \
+        -i "$device" \
         -c:v mjpeg -q:v 5 \
-        -f mjpeg - 2>/dev/null | run_mjpeg_server
+        -f mjpeg - 2>/dev/null | run_mjpeg_server "$port" "$snapshot_file"
+}
+
+start_camera_stream() {
+    local camera_type="$1"
+    local camera_id="$2"
+    local camera_device="$3"
+    local width="$4"
+    local height="$5"
+    local port="$6"
+    local snapshot_file="$7"
+    local label="$8"
+    local focus_mode="$9"
+    local focus_value="${10}"
+    local focus_settle_time="${11}"
+
+    FOCUS_MODE="$focus_mode"
+    FOCUS_VALUE="$focus_value"
+    FOCUS_SETTLE_TIME="$focus_settle_time"
+
+    case "$camera_type" in
+        "RPI")
+            start_rpi_stream "$camera_id" "$width" "$height" "$port" "$snapshot_file" "$label"
+            ;;
+        "USB")
+            start_usb_stream "$camera_device" "$width" "$height" "$port" "$snapshot_file" "$label"
+            ;;
+        *)
+            log_error "Unknown $label camera type: $camera_type"
+            exit 1
+            ;;
+    esac
 }
 
 main() {
     load_configuration
     print_startup_banner
 
-    case "$CAMERA_TYPE" in
-        "RPI")
-            start_rpi_stream
-            ;;
-        "USB")
-            start_usb_stream
-            ;;
-        *)
-            log_error "Unknown camera type: $CAMERA_TYPE"
-            exit 1
-            ;;
-    esac
+    if [[ "$SECOND_CAMERA_ENABLED" == "1" ]] && [[ "$STREAM_PORT" == "$SECOND_STREAM_PORT" ]]; then
+        log_error "Primary and secondary stream ports must be different (both are $STREAM_PORT)"
+        exit 1
+    fi
+
+    start_camera_stream "$CAMERA_TYPE" "$CAMERA_ID" "$CAMERA_DEVICE" \
+        "$STREAM_WIDTH" "$STREAM_HEIGHT" "$STREAM_PORT" "$SNAPSHOT_FILE" \
+        "primary" "$FOCUS_MODE" "$FOCUS_VALUE" "$FOCUS_SETTLE_TIME" &
+
+    if [[ "$SECOND_CAMERA_ENABLED" == "1" ]]; then
+        start_camera_stream "$SECOND_CAMERA_TYPE" "$SECOND_CAMERA_ID" "$SECOND_CAMERA_DEVICE" \
+            "$SECOND_STREAM_WIDTH" "$SECOND_STREAM_HEIGHT" "$SECOND_STREAM_PORT" "$SECOND_SNAPSHOT_FILE" \
+            "secondary" "$SECOND_FOCUS_MODE" "$SECOND_FOCUS_VALUE" "$SECOND_FOCUS_SETTLE_TIME" &
+    fi
+
+    wait
 }
 
 main "$@"

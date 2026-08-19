@@ -177,43 +177,74 @@ install_files() {
 # Camera selection wizard page
 # Future pages can use the global camera values set here.
 # ============================================
-configure_camera() {
-    print_step 3 "Detecting cameras..."
-    print_section_header "Camera"
+select_camera_profile() {
+    local label="$1"
+    local selected_camera
+    local camera_type
+    local camera_id
+    local camera_name
+    local camera_device
 
-    # Source the detection script
-    source "$INSTALL_DIR/scripts/detect_cameras.sh"
+    print_section_header "$label Camera" > /dev/tty
 
-    # Run camera selection
-    SELECTED_CAMERA=$(select_camera)
+    selected_camera=$(select_camera)
 
-    if [[ -z "$SELECTED_CAMERA" ]]; then
+    if [[ -z "$selected_camera" ]]; then
         print_error "No camera selected"
         exit 1
     fi
 
-    CAMERA_TYPE=$(echo "$SELECTED_CAMERA" | cut -d: -f1)
-    CAMERA_ID=$(echo "$SELECTED_CAMERA" | cut -d: -f2)
-    CAMERA_NAME=$(echo "$SELECTED_CAMERA" | cut -d: -f3-)
+    camera_type=$(echo "$selected_camera" | cut -d: -f1)
+    camera_id=$(echo "$selected_camera" | cut -d: -f2)
+    camera_name=$(echo "$selected_camera" | cut -d: -f3-)
 
-    # Determine camera device for USB cameras
-    if [[ "$CAMERA_TYPE" == "USB" ]]; then
-        CAMERA_DEVICE="$CAMERA_ID"
+    if [[ "$camera_type" == "USB" ]]; then
+        camera_device="$camera_id"
     else
-        CAMERA_DEVICE=""
+        camera_device=""
     fi
 
-    echo ""
-    echo -e "  Selected: ${GREEN}$CAMERA_NAME${NC}"
+    echo "" > /dev/tty
+    echo -e "  Selected: ${GREEN}$camera_name${NC}" > /dev/tty
+    printf '%s|%s|%s|%s\n' "$camera_type" "$camera_id" "$camera_device" "$camera_name"
+}
+
+assign_camera_profile() {
+    local prefix="$1"
+    local profile="$2"
+    local camera_type
+    local camera_id
+    local camera_device
+    local camera_name
+
+    IFS='|' read -r camera_type camera_id camera_device camera_name <<< "$profile"
+    printf -v "${prefix}_TYPE" '%s' "$camera_type"
+    printf -v "${prefix}_ID" '%s' "$camera_id"
+    printf -v "${prefix}_DEVICE" '%s' "$camera_device"
+    printf -v "${prefix}_NAME" '%s' "$camera_name"
+}
+
+configure_camera() {
+    print_step 3 "Detecting cameras..."
+
+    # Source the detection script once; primary and secondary camera setup reuse it.
+    source "$INSTALL_DIR/scripts/detect_cameras.sh"
+
+    assign_camera_profile "CAMERA" "$(select_camera_profile "Primary")"
 }
 
 # ============================================
 # Prusa Connect wizard page
 # Collects credentials and creates a new fingerprint before writing config.
 # ============================================
-configure_prusa_connect() {
-    print_step 4 "Configuring Prusa Connect..."
-    print_section_header "Prusa Connect"
+configure_prusa_connect_profile() {
+    local label="$1"
+    local token_var="$2"
+    local fingerprint_var="$3"
+    local token
+    local fingerprint
+
+    print_section_header "$label Prusa Connect"
 
     echo "To get your camera token:"
     echo "  1. Go to https://connect.prusa3d.com"
@@ -223,17 +254,23 @@ configure_prusa_connect() {
     echo "  5. Copy the Token shown"
     echo ""
 
-    TOKEN=$(read_required "Enter your Prusa Connect Token")
+    token=$(read_required "Enter your $label Prusa Connect Token")
+    fingerprint=$(cat /proc/sys/kernel/random/uuid)
 
-    # Generate unique fingerprint
-    FINGERPRINT=$(cat /proc/sys/kernel/random/uuid)
+    printf -v "$token_var" '%s' "$token"
+    printf -v "$fingerprint_var" '%s' "$fingerprint"
 
     echo ""
-    echo -e "  Generated Fingerprint: ${YELLOW}$FINGERPRINT${NC}"
+    echo -e "  Generated Fingerprint: ${YELLOW}$fingerprint${NC}"
     echo ""
     echo "  IMPORTANT: Save this fingerprint! You may need it to re-register"
     echo "  the camera in Prusa Connect if you reinstall."
     echo ""
+}
+
+configure_prusa_connect() {
+    print_step 4 "Configuring Prusa Connect..."
+    configure_prusa_connect_profile "Primary" "TOKEN" "FINGERPRINT"
 }
 
 # ============================================
@@ -241,16 +278,25 @@ configure_prusa_connect() {
 # USB cameras can opt into focus modes; Raspberry Pi cameras skip this page.
 # Future image-control pages can be inserted after this function.
 # ============================================
-configure_focus() {
-    FOCUS_MODE="auto"
-    FOCUS_VALUE="0"
-    FOCUS_SETTLE_TIME="2"
+configure_focus_profile() {
+    local label="$1"
+    local camera_type="$2"
+    local mode_var="$3"
+    local value_var="$4"
+    local settle_var="$5"
+    local focus_choice
+    local focus_mode="auto"
+    local focus_value="0"
+    local focus_settle_time="2"
 
-    if [[ "$CAMERA_TYPE" != "USB" ]]; then
+    if [[ "$camera_type" != "USB" ]]; then
+        printf -v "$mode_var" '%s' "$focus_mode"
+        printf -v "$value_var" '%s' "$focus_value"
+        printf -v "$settle_var" '%s' "$focus_settle_time"
         return
     fi
 
-    print_section_header "Focus"
+    print_section_header "$label Focus"
     echo "Select focus mode:"
     echo "  1) Automatic (recommended)"
     echo "  2) Continuous autofocus"
@@ -262,20 +308,20 @@ configure_focus() {
         focus_choice=$(read_with_default "Focus mode" "1")
         case "$focus_choice" in
             1)
-                FOCUS_MODE="auto"
+                focus_mode="auto"
                 break
                 ;;
             2)
-                FOCUS_MODE="continuous"
+                focus_mode="continuous"
                 break
                 ;;
             3)
-                FOCUS_MODE="lock"
+                focus_mode="lock"
                 break
                 ;;
             4)
-                FOCUS_MODE="manual"
-                FOCUS_VALUE=$(read_number_with_default "Manual focus value" "0")
+                focus_mode="manual"
+                focus_value=$(read_number_with_default "Manual focus value" "0")
                 break
                 ;;
             *)
@@ -284,19 +330,33 @@ configure_focus() {
         esac
     done
 
-    FOCUS_SETTLE_TIME=$(read_number_with_default "Focus settle time in seconds" "$FOCUS_SETTLE_TIME")
+    focus_settle_time=$(read_number_with_default "Focus settle time in seconds" "$focus_settle_time")
+
+    printf -v "$mode_var" '%s' "$focus_mode"
+    printf -v "$value_var" '%s' "$focus_value"
+    printf -v "$settle_var" '%s' "$focus_settle_time"
+}
+
+configure_focus() {
+    configure_focus_profile "Primary" "$CAMERA_TYPE" "FOCUS_MODE" "FOCUS_VALUE" "FOCUS_SETTLE_TIME"
 }
 
 # ============================================
 # Stream wizard page
 # Collects stream resolution and port before the single config write.
 # ============================================
-configure_stream() {
-    STREAM_WIDTH="1280"
-    STREAM_HEIGHT="720"
-    STREAM_PORT="8080"
+configure_stream_profile() {
+    local label="$1"
+    local default_port="$2"
+    local port_var="$3"
+    local width_var="$4"
+    local height_var="$5"
+    local resolution_choice
+    local stream_width="1280"
+    local stream_height="720"
+    local stream_port="$default_port"
 
-    print_section_header "Stream"
+    print_section_header "$label Stream"
     echo "Select stream resolution:"
     echo "  1) 1920x1080"
     echo "  2) 1280x720 (recommended)"
@@ -308,23 +368,23 @@ configure_stream() {
         resolution_choice=$(read_with_default "Stream resolution" "2")
         case "$resolution_choice" in
             1)
-                STREAM_WIDTH="1920"
-                STREAM_HEIGHT="1080"
+                stream_width="1920"
+                stream_height="1080"
                 break
                 ;;
             2)
-                STREAM_WIDTH="1280"
-                STREAM_HEIGHT="720"
+                stream_width="1280"
+                stream_height="720"
                 break
                 ;;
             3)
-                STREAM_WIDTH="640"
-                STREAM_HEIGHT="480"
+                stream_width="640"
+                stream_height="480"
                 break
                 ;;
             4)
-                STREAM_WIDTH=$(read_number_with_default "Custom stream width" "$STREAM_WIDTH")
-                STREAM_HEIGHT=$(read_number_with_default "Custom stream height" "$STREAM_HEIGHT")
+                stream_width=$(read_number_with_default "Custom stream width" "$stream_width")
+                stream_height=$(read_number_with_default "Custom stream height" "$stream_height")
                 break
                 ;;
             *)
@@ -333,7 +393,51 @@ configure_stream() {
         esac
     done
 
-    STREAM_PORT=$(read_number_with_default "HTTP stream port" "$STREAM_PORT")
+    stream_port=$(read_number_with_default "$label HTTP stream port" "$stream_port")
+
+    printf -v "$port_var" '%s' "$stream_port"
+    printf -v "$width_var" '%s' "$stream_width"
+    printf -v "$height_var" '%s' "$stream_height"
+}
+
+configure_stream() {
+    configure_stream_profile "Primary" "8080" "STREAM_PORT" "STREAM_WIDTH" "STREAM_HEIGHT"
+}
+
+configure_secondary_camera() {
+    SECOND_CAMERA_ENABLED="0"
+    SECOND_CAMERA_TYPE=""
+    SECOND_CAMERA_ID=""
+    SECOND_CAMERA_DEVICE=""
+    SECOND_CAMERA_NAME=""
+    SECOND_FINGERPRINT=""
+    SECOND_TOKEN=""
+    SECOND_FOCUS_MODE="auto"
+    SECOND_FOCUS_VALUE="0"
+    SECOND_FOCUS_SETTLE_TIME="2"
+    SECOND_STREAM_PORT="8081"
+    SECOND_STREAM_WIDTH="1280"
+    SECOND_STREAM_HEIGHT="720"
+
+    print_section_header "Secondary Camera"
+    add_second=$(read_with_default "Do you want to add a secondary camera? Y/n" "Y")
+    case "$add_second" in
+        n|N|no|NO|No)
+            return
+            ;;
+    esac
+
+    SECOND_CAMERA_ENABLED="1"
+    assign_camera_profile "SECOND_CAMERA" "$(select_camera_profile "Secondary")"
+    configure_prusa_connect_profile "Secondary" "SECOND_TOKEN" "SECOND_FINGERPRINT"
+    configure_focus_profile "Secondary" "$SECOND_CAMERA_TYPE" "SECOND_FOCUS_MODE" "SECOND_FOCUS_VALUE" "SECOND_FOCUS_SETTLE_TIME"
+    while true; do
+        configure_stream_profile "Secondary" "8081" "SECOND_STREAM_PORT" "SECOND_STREAM_WIDTH" "SECOND_STREAM_HEIGHT"
+        if [[ "$SECOND_STREAM_PORT" != "$STREAM_PORT" ]]; then
+            break
+        fi
+        print_error "Secondary stream port must be different from primary stream port $STREAM_PORT"
+    done
 }
 
 # ============================================
@@ -369,6 +473,21 @@ FOCUS_SETTLE_TIME=$FOCUS_SETTLE_TIME
 STREAM_PORT=$STREAM_PORT
 STREAM_WIDTH=$STREAM_WIDTH
 STREAM_HEIGHT=$STREAM_HEIGHT
+
+# Secondary Camera Settings
+SECOND_CAMERA_ENABLED=$SECOND_CAMERA_ENABLED
+SECOND_CAMERA_TYPE="$SECOND_CAMERA_TYPE"
+SECOND_CAMERA_ID="$SECOND_CAMERA_ID"
+SECOND_CAMERA_DEVICE="$SECOND_CAMERA_DEVICE"
+SECOND_CAMERA_NAME="$SECOND_CAMERA_NAME"
+SECOND_FINGERPRINT="$SECOND_FINGERPRINT"
+SECOND_TOKEN="$SECOND_TOKEN"
+SECOND_FOCUS_MODE="$SECOND_FOCUS_MODE"
+SECOND_FOCUS_VALUE=$SECOND_FOCUS_VALUE
+SECOND_FOCUS_SETTLE_TIME=$SECOND_FOCUS_SETTLE_TIME
+SECOND_STREAM_PORT=$SECOND_STREAM_PORT
+SECOND_STREAM_WIDTH=$SECOND_STREAM_WIDTH
+SECOND_STREAM_HEIGHT=$SECOND_STREAM_HEIGHT
 EOF_CONF
 
     chmod 600 "$CONFIG_FILE"
@@ -463,6 +582,10 @@ print_summary() {
     echo ""
     echo "Camera Stream:"
     echo -e "  ${YELLOW}http://$IP_ADDR:$STREAM_PORT${NC}"
+    if [[ "$SECOND_CAMERA_ENABLED" == "1" ]]; then
+        echo "Secondary Camera Stream:"
+        echo -e "  ${YELLOW}http://$IP_ADDR:$SECOND_STREAM_PORT${NC}"
+    fi
     echo ""
     echo "Prusa Connect:"
     echo "  Snapshots are being uploaded every 10 seconds"
@@ -492,6 +615,7 @@ main() {
     configure_prusa_connect
     configure_focus
     configure_stream
+    configure_secondary_camera
     write_configuration
     install_services
     start_services
